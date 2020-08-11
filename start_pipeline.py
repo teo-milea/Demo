@@ -3,7 +3,7 @@ import sys
 import argparse
 import cv2
 
-from darknet import darknet
+from own_darknet import darknet
 from control import control_interface, init_interface, reset_object, shutdown_server
 import tensorflow as tf
 import numpy as np
@@ -55,9 +55,9 @@ def cvDrawBoxes(detections, img, label):
 
 def init_yolov4():
     global metaMain, netMain, altNames
-    configPath = "./darknet/cfg/yolo-hand.cfg"
-    weightPath = "./darknet/yolo-hand_last.weights"
-    metaPath = "./darknet/data/obj.data"
+    configPath = "./own_darknet/cfg/yolo-hand.cfg"
+    weightPath = "./own_darknet/yolo-hand_last.weights"
+    metaPath = "./own_darknet/data/obj.data"
     if not os.path.exists(configPath):
         raise ValueError("Invalid config path `" +
                          os.path.abspath(configPath)+"`")
