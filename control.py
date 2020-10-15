@@ -1,7 +1,9 @@
 import socket
 import collections
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+import cv2
+import numpy as np
+import math
+sock = socket.socket()
 INIT_COMMAND = 'INIT'
 ROTATION_COMMANDS = ['X_UP', 'Y_LEFT', 'Z_FRONT', 'X_DOWN', 'Y_RIGHT', 'Z_BACK']
 rotations = ['X', 'Y', 'Z'] 
@@ -23,14 +25,14 @@ init_counts = 0
 
 def init_interface(port):
     sock.connect(('0.0.0.0', port))
-    sock.sendall(INIT_COMMAND.encode())
+    #sock.sendall(INIT_COMMAND.encode())
 
 def reset_object():
     global hand_position, hand_scale,\
         position_queue, scale_queue, label_queue, \
         axis_rotation, axis_counts, init_counts
 
-    sock.sendall(INIT_COMMAND.encode())
+    #sock.sendall(INIT_COMMAND.encode())
     hand_position = None
     hand_scale = None
     position_queue = []
@@ -41,7 +43,7 @@ def reset_object():
     init_counts = 0
 
 
-def get_movement(img_w, img_h):
+def get_movement_2(img_w, img_h):
     global hand_position
     dx = 0
     dy = 0
@@ -70,6 +72,27 @@ def get_movement(img_w, img_h):
 
     return dx / img_w, dy / img_h
 
+def get_movement(img_w, img_h):
+    global hand_position
+    dx = 0
+    dy = 0
+    cx, cy = hand_position
+    print("MANA SE AFLA LA", cx, cy, img_w, img_h)
+    print(img_w/3, 2 * img_w/3)
+    print(img_h/3, 2 * img_h/3)
+    if cx < img_w /3 and img_h/3 < cy < 2 * img_h/3:
+        dx = 0.1
+    if cx > 2 * img_w /3 and img_h/3 < cy < 2 * img_h/3:
+        dx = - 0.1
+
+    if cy < img_h /3 and img_w/3 < cx < 2 * img_w/3:
+        dy = 0.1
+
+    if cy > 2 * img_h /3 and img_w/3 < cx < 2 * img_w/3:
+        dy = - 0.1
+    print(dx, dy)
+    return dx, dy
+
 def get_scale_factor(img_w, img_h, multiplier):
     global hand_scale
     
@@ -91,12 +114,88 @@ def get_scale_factor(img_w, img_h, multiplier):
 
     return scale_factor
 
+state = 0
 
-def control_interface(hand_x, hand_y, hand_w, hand_h, img_w, img_h, label):
+
+def find_quarter(cx, cy, img_w, img_h):
+    center_x = 3/8 * img_w
+    center_y = 5/8 * img_h
+    q = center_x < cx + (center_y < cy) * 2
+    new_cx = 0
+    new_cy = 0
+    k = 0.4
+    k2 = 0.1
+    new_cx = cx + (-1) ** (center_x > cx) * abs(cx - center_x) * k - img_w * k2
+    new_cy = cy + (-1) ** (center_y > cy) * abs(cy - center_y) * k/8 - img_h * k2/2
+    return new_cx, new_cy
+
+directions = ["up", "down", "left", "right"]
+
+def control_interface(hand_x, hand_y, hand_w, hand_h, img_w, img_h, label, img, depth):
+    global state, position_queue
+    cx = hand_x 
+    cy = hand_y
+    position_queue.append((cx, cy))
+    new_cx, new_cy = find_quarter(cx, cy, img_w, img_h)
+    
+    cv2.circle(img, (int(new_cx), int(new_cy)), 3, [255, 102, 0], 2)
+    #print(cx, cy)
+    cv2.imshow('c', img)
+    #print (state)
+    #print(len(position_queue))
+    print("DEPTH:", depth)
+    
+    if len(position_queue) > 5:
+        old_cx, old_cy = position_queue[-5]
+        d = math.sqrt((old_cx - cx) ** 2 + (old_cy - cy)**2)
+        threshold = 0.1
+        dire = -1
+        if abs(old_cx - cx) < threshold * img_w:
+            if old_cy - cy > 0:
+                dire = 0
+            else:
+                dire = 1
+        elif abs(old_cy - cy) < threshold * img_h:
+            if old_cx - cx > 0:
+                dire = 2
+            else:
+                dire = 3
+
+        if depth < 0.23:
+            state = 1        
+        if d > 250:
+            print("HIGH SPEED")
+            if dire in [0,1]:
+                print(directions[dire])
+                sock.sendall(str(dire).encode())
+            else:
+                print("dire:", 1 - dire)
+            position_queue = []
+            state = 2
+        if depth > 0.23:
+            state = 0
+        if depth < 0.2:
+            if cx < img_w * 0.3:
+                print("MOVE LEFT")
+                sock.sendall(b'4')
+            if cx > img_w * 0.7:
+                print("MOVE RIGHT")
+                sock.sendall(b'5')
+        # if state == 2:
+        #     print("STATE:", 2)
+        #     if img_w * 0.6 > cx > img_w * 0.4 and img_h * 0.6 > cy > img_h * 0.4:
+        #         state = 0
+        #         print("STATE:", 0)
+        
+    
+    #print("New:",state)
+
+def control_interface2(hand_x, hand_y, hand_w, hand_h, img_w, img_h, label):
     global position_queue, scale_queue, label_queue, \
         hand_position, hand_scale, axis_rotation, \
         axis_counts, init_counts
-    
+    print(hand_x, hand_y, hand_w, hand_h, img_w, img_h)
+    # return 
     cx = hand_x + hand_w / 2
     cy = hand_y + hand_h / 2
     scale = hand_w * hand_h 
@@ -111,12 +210,13 @@ def control_interface(hand_x, hand_y, hand_w, hand_h, img_w, img_h, label):
     if hand_position == None:
         hand_position = (cx, cy)
 
-    if len(label_queue) == 3:
+    if len(label_queue) == 3 or True:
         filtered_label = collections.Counter(label_queue).most_common(1)[0][0]
         
         if filtered_label == PALM:
             dx, dy = get_movement(img_w, img_h)
             dz = get_scale_factor(img_w, img_h, 1)
+            dz = 0
             # command = MOVE_COMMAND + str(-dz) + " " + str(-dx) + " " + str(-dy)
             if dx > 0:
                 sock.sendall(b'RIGHT')
@@ -136,7 +236,6 @@ def control_interface(hand_x, hand_y, hand_w, hand_h, img_w, img_h, label):
 
             if init_counts == 1:
                 init_counts = -1
-            
 
         elif filtered_label == OK:
             axis_counts += 1
@@ -173,6 +272,7 @@ def control_interface(hand_x, hand_y, hand_w, hand_h, img_w, img_h, label):
         scale_queue = []
 
 def shutdown_server():
+    pass
     sock.sendall(b'SHUTDOWN')
     sock.sendall(b'')
     sock.close()
